@@ -67,6 +67,8 @@ FILE_COMPILE_FOR_SPEED
 
 #include "programming/logic_condition.h"
 
+#define GYRO_SMPL_COUNT 4
+
 typedef struct {
     uint8_t axis;
     float kP;   // Proportional gain
@@ -95,7 +97,7 @@ typedef struct {
     float stickPosition;
 
     float previousRateTarget;
-    float previousRateGyro;
+    float previousRateGyro[GYRO_SMPL_COUNT];
 
 #ifdef USE_D_BOOST
     pt1Filter_t dBoostLpf;
@@ -701,12 +703,23 @@ static float pTermProcess(pidState_t *pidState, float rateError, float dT) {
     return pidState->ptermFilterApplyFn(&pidState->ptermLpfState, newPTerm, yawLpfHz, dT);
 }
 
+static float calcDelta(pidState_t *pidState, int n)
+{
+    float delta = pidState->previousRateGyro[0] - pidState->gyroRate;
+    for ( int i=0; i<n-1; ++i)
+        delta += pidState->previousRateGyro[i+1] - pidState->previousRateGyro[i];
+    
+    return delta / n;
+}
+
 #ifdef USE_D_BOOST
 static float FAST_CODE applyDBoost(pidState_t *pidState, float dT) {
 
     float dBoost = 1.0f;
 
-    const float dBoostGyroDelta = (pidState->gyroRate - pidState->previousRateGyro) / dT;
+    //const float dBoostGyroDelta = (pidState->gyroRate - pidState->previousRateGyro[0]) / dT;    // TODO :: calc delta
+    const float dBoostGyroDelta = calcDelta(pidState, GYRO_SMPL_COUNT) / dT;    // TODO :: calc delta
+
     const float dBoostGyroAcceleration = fabsf(biquadFilterApply(&pidState->dBoostGyroLpf, dBoostGyroDelta));
     const float dBoostRateAcceleration = fabsf((pidState->rateTarget - pidState->previousRateTarget) / dT);
 
@@ -738,7 +751,8 @@ static float dTermProcess(pidState_t *pidState, float dT) {
         // optimisation for when D is zero, often used by YAW axis
         newDTerm = 0;
     } else {
-        float delta = pidState->previousRateGyro - pidState->gyroRate;
+        //float delta = pidState->previousRateGyro - pidState->gyroRate;
+        float delta = calcDelta(pidState, GYRO_SMPL_COUNT);
 
         delta = dTermLpfFilterApplyFn((filter_t *) &pidState->dtermLpfState, delta);
         delta = dTermLpf2FilterApplyFn((filter_t *) &pidState->dtermLpf2State, delta);
@@ -806,7 +820,12 @@ static void NOINLINE pidApplyFixedWingRateController(pidState_t *pidState, fligh
     axisPID_Setpoint[axis] = pidState->rateTarget;
 #endif
 
-    pidState->previousRateGyro = pidState->gyroRate;
+
+//    pidState->previousRateGyro = pidState->gyroRate;
+
+    for ( int i=GYRO_SMPL_COUNT-1; i>0; --i)
+        pidState->previousRateGyro[i] = pidState->previousRateGyro[i-1];
+    pidState->previousRateGyro[0] = pidState->gyroRate;
 
 }
 
@@ -867,7 +886,11 @@ static void FAST_CODE NOINLINE pidApplyMulticopterRateController(pidState_t *pid
 #endif
 
     pidState->previousRateTarget = pidState->rateTarget;
-    pidState->previousRateGyro = pidState->gyroRate;
+//    pidState->previousRateGyro = pidState->gyroRate;
+
+    for ( int i=GYRO_SMPL_COUNT-1; i>0; --i)
+        pidState->previousRateGyro[i] = pidState->previousRateGyro[i-1];
+    pidState->previousRateGyro[0] = pidState->gyroRate;
 }
 
 void updateHeadingHoldTarget(int16_t heading)
