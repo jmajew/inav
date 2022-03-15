@@ -96,7 +96,7 @@ typedef struct {
 
     float stickPosition;
 
-    float previousRateTarget;
+    float previousRateTarget[GYRO_SMPL_COUNT];
     float previousRateGyro[GYRO_SMPL_COUNT];
 
 #ifdef USE_D_BOOST
@@ -259,6 +259,7 @@ PG_RESET_TEMPLATE(pidProfile_t, pidProfile,
         .dterm_lpf_hz = SETTING_DTERM_LPF_HZ_DEFAULT,
         .dterm_lpf2_type = SETTING_DTERM_LPF2_TYPE_DEFAULT,
         .dterm_lpf2_hz = SETTING_DTERM_LPF2_HZ_DEFAULT,
+        .dterm_delta_wav_depth = SETTING_DTERM_DELTA_WAV_DEPTH_DEFAULT,
         .yaw_lpf_hz = SETTING_YAW_LPF_HZ_DEFAULT,
 
         .itermWindupPointPercent = SETTING_ITERM_WINDUP_DEFAULT,
@@ -703,7 +704,7 @@ static float pTermProcess(pidState_t *pidState, float rateError, float dT) {
     return pidState->ptermFilterApplyFn(&pidState->ptermLpfState, newPTerm, yawLpfHz, dT);
 }
 
-static float calcDelta(pidState_t *pidState, int n)
+static float calcDelta_GyroRate(pidState_t *pidState, int n)
 {
     float delta = pidState->previousRateGyro[0] - pidState->gyroRate;
     for ( int i=0; i<n-1; ++i)
@@ -712,16 +713,28 @@ static float calcDelta(pidState_t *pidState, int n)
     return delta / n;
 }
 
+static float calcDelta_RateTarget(pidState_t *pidState, int n)
+{
+    float delta = pidState->previousRateTarget[0] - pidState->rateTarget;
+    for ( int i=0; i<n-1; ++i)
+        delta += pidState->previousRateTarget[i+1] - pidState->previousRateTarget[i];
+    
+    return delta / n;
+}
+
+
 #ifdef USE_D_BOOST
 static float FAST_CODE applyDBoost(pidState_t *pidState, float dT) {
 
     float dBoost = 1.0f;
 
     //const float dBoostGyroDelta = (pidState->gyroRate - pidState->previousRateGyro[0]) / dT;    // TODO :: calc delta
-    const float dBoostGyroDelta = calcDelta(pidState, GYRO_SMPL_COUNT) / dT;    // TODO :: calc delta
+    const float dBoostGyroDelta = calcDelta_GyroRate(pidState, pidProfile()->dterm_delta_wav_depth) / dT;    // TODO :: calc delta
+    const float dRateTarget = calcDelta_RateTarget(pidState, pidProfile()->dterm_delta_wav_depth);
 
     const float dBoostGyroAcceleration = fabsf(biquadFilterApply(&pidState->dBoostGyroLpf, dBoostGyroDelta));
-    const float dBoostRateAcceleration = fabsf((pidState->rateTarget - pidState->previousRateTarget) / dT);
+ //   const float dBoostRateAcceleration = fabsf((pidState->rateTarget - pidState->previousRateTarget) / dT);
+    const float dBoostRateAcceleration = fabsf( dRateTarget / dT);
 
     if (dBoostGyroAcceleration >= dBoostRateAcceleration) {
         //Gyro is accelerating faster than setpoint, we want to smooth out
@@ -752,7 +765,7 @@ static float dTermProcess(pidState_t *pidState, float dT) {
         newDTerm = 0;
     } else {
         //float delta = pidState->previousRateGyro - pidState->gyroRate;
-        float delta = calcDelta(pidState, GYRO_SMPL_COUNT);
+        float delta = calcDelta_GyroRate(pidState, pidProfile()->dterm_delta_wav_depth);
 
         delta = dTermLpfFilterApplyFn((filter_t *) &pidState->dtermLpfState, delta);
         delta = dTermLpf2FilterApplyFn((filter_t *) &pidState->dtermLpf2State, delta);
@@ -780,7 +793,9 @@ static void nullRateController(pidState_t *pidState, flight_dynamics_index_t axi
 
 static void NOINLINE pidApplyFixedWingRateController(pidState_t *pidState, flight_dynamics_index_t axis, float dT)
 {
-    const float rateError = pidState->rateTarget - pidState->gyroRate;
+//    const float rateError = pidState->rateTarget - pidState->gyroRate;
+    const float rateError = calcDelta_RateTarget(pidState, pidProfile()->dterm_delta_wav_depth) - calcDelta_GyroRate(pidState, pidProfile()->dterm_delta_wav_depth);
+
     const float newPTerm = pTermProcess(pidState, rateError, dT);
     const float newDTerm = dTermProcess(pidState, dT);
     const float newFFTerm = pidState->rateTarget * pidState->kFF;
@@ -847,11 +862,16 @@ static float FAST_CODE applyItermRelax(const int axis, float currentPidSetpoint,
 
 static void FAST_CODE NOINLINE pidApplyMulticopterRateController(pidState_t *pidState, flight_dynamics_index_t axis, float dT)
 {
-    const float rateError = pidState->rateTarget - pidState->gyroRate;
+//    const float rateError = pidState->rateTarget - pidState->gyroRate;
+    const float rateError = calcDelta_RateTarget(pidState, pidProfile()->dterm_delta_wav_depth) - calcDelta_GyroRate(pidState, pidProfile()->dterm_delta_wav_depth);
+
+
     const float newPTerm = pTermProcess(pidState, rateError, dT);
     const float newDTerm = dTermProcess(pidState, dT);
 
-    const float rateTargetDelta = pidState->rateTarget - pidState->previousRateTarget;
+//    const float rateTargetDelta = pidState->rateTarget - pidState->previousRateTarget;
+    const float rateTargetDelta = calcDelta_RateTarget(pidState, pidProfile()->dterm_delta_wav_depth);
+
     const float rateTargetDeltaFiltered = pt3FilterApply(&pidState->rateTargetFilter, rateTargetDelta);
 
     /*
@@ -885,12 +905,16 @@ static void FAST_CODE NOINLINE pidApplyMulticopterRateController(pidState_t *pid
     axisPID_Setpoint[axis] = pidState->rateTarget;
 #endif
 
-    pidState->previousRateTarget = pidState->rateTarget;
+//    pidState->previousRateTarget = pidState->rateTarget;
 //    pidState->previousRateGyro = pidState->gyroRate;
 
     for ( int i=GYRO_SMPL_COUNT-1; i>0; --i)
         pidState->previousRateGyro[i] = pidState->previousRateGyro[i-1];
     pidState->previousRateGyro[0] = pidState->gyroRate;
+
+    for ( int i=GYRO_SMPL_COUNT-1; i>0; --i)
+        pidState->previousRateTarget[i] = pidState->previousRateTarget[i-1];
+    pidState->previousRateTarget[0] = pidState->rateTarget;
 }
 
 void updateHeadingHoldTarget(int16_t heading)

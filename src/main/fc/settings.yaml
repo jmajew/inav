@@ -1869,7 +1869,13 @@ groups:
         description: "Defines the type of stage 1 D-term LPF filter. Possible values: `PT1`, `BIQUAD`, `PT2`, `PT3`."
         default_value: "PT1"
         field: dterm_lpf2_type
-        table: filter_type_full
+        table: filter_type_full     
+      - name: dterm_delta_wav_depth
+        description: "Defines the depth of walking average for calculating delta for D-term."
+        default_value: 3
+        field: dterm_delta_wav_depth
+        min: 1
+        max: 4
       - name: yaw_lpf_hz
         description: "Yaw P term low pass filter cutoff frequency. Should be disabled (set to `0`) on small multirotors (7 inches and below)"
         default_value: 0

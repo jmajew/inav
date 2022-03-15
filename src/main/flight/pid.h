@@ -109,7 +109,8 @@ typedef struct pidProfile_s {
     uint16_t dterm_lpf_hz;                  
     
     uint8_t dterm_lpf2_type;                // Dterm LPF type: PT1, BIQUAD
-    uint16_t dterm_lpf2_hz;                 
+    uint16_t dterm_lpf2_hz;
+    uint8_t dterm_delta_wav_depth;                 
     
     uint8_t yaw_lpf_hz;
 
