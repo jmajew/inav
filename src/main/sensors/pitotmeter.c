@@ -45,15 +45,18 @@
 #include "scheduler/protothreads.h"
 
 #include "sensors/pitotmeter.h"
+#include "sensors/barometer.h"
 #include "sensors/sensors.h"
 
 
-#include "build/debug.h"
+//#include "build/debug.h"
 
 
 #ifdef USE_PITOT
 
-pitot_t pitot;
+extern baro_t baro;
+
+pitot_t pitot = {.lastMeasurementUs = 0, .lastSeenHealthyMs = 0};
 
 PG_REGISTER_WITH_RESET_TEMPLATE(pitotmeterConfig_t, pitotmeterConfig, PG_PITOTMETER_CONFIG, 2);
 
@@ -92,18 +95,14 @@ bool pitotDetect(pitotDev_t *dev, uint8_t pitotHardwareToUse)
             FALLTHROUGH;
 
         case PITOT_DLVR:
-#ifdef USE_PITOT_DLVR
-            if (dlvrDetect(dev)) {
+
+			// Skip autodetection for DLVR (it is indistinguishable from MS4525) and allow only manual config
+            if (pitotHardwareToUse != PITOT_AUTODETECT && dlvrDetect(dev)) {
                 pitotHardware = PITOT_DLVR;
                 break;
             }
-#endif
-            /* If we are asked for a specific sensor - break out, otherwise - fall through and continue */
-            if (pitotHardwareToUse != PITOT_AUTODETECT) {
-                break;
-            }
             FALLTHROUGH;
-			
+
         case PITOT_ADC:
 #if defined(USE_ADC) && defined(USE_PITOT_ADC)
             if (adcPitotDetect(dev)) {
@@ -187,15 +186,12 @@ bool pitotIsCalibrationComplete(void)
 
 void pitotStartCalibration(void)
 {
-    zeroCalibrationStartS(&pitot.zeroCalibration, CALIBRATING_PITOT_TIME_MS, SSL_AIR_PRESSURE * 0.00001f, false);
+    zeroCalibrationStartS(&pitot.zeroCalibration, CALIBRATING_PITOT_TIME_MS, SSL_AIR_PRESSURE * pitot.dev.calibThreshold, false);
 }
 
 static void performPitotCalibrationCycle(void)
 {
     zeroCalibrationAddValueS(&pitot.zeroCalibration, pitot.pressure);
-
-    // pitot.zeroCalibration.params.sampleCount
-    // pitot.zeroCalibration.val.accumulatedValue
 
     if (zeroCalibrationIsCompleteS(&pitot.zeroCalibration)) {
         zeroCalibrationGetZeroS(&pitot.zeroCalibration, &pitot.pressureZero);
@@ -208,32 +204,43 @@ STATIC_PROTOTHREAD(pitotThread)
     ptBegin(pitotThread);
 
     static float pitotPressureTmp;
-    static float pitotTemperature;
+    static float pitotTemperatureTmp;
     timeUs_t currentTimeUs;
 
     // Init filter
     pitot.lastMeasurementUs = micros();
+
     pt1FilterInit(&pitot.lpfState, pitotmeterConfig()->pitot_lpf_milli_hz / 1000.0f, 0.0f);
 
     while(1) {
-        // // Start measurement
-        // if (pitot.dev.start(&pitot.dev)) {
-        //     pitot.lastSeenHealthyMs = millis();
-        // }
+// #ifdef USE_SIMULATOR
+//     	while (SIMULATOR_HAS_OPTION(HITL_AIRSPEED) && SIMULATOR_HAS_OPTION(HITL_PITOT_FAILURE))
+//         {
+//             ptDelayUs(10000);
+//     	}
+// #endif
 
-        // ptDelayUs(pitot.dev.delay);
-
-        // Read and calculate data
-        if (pitot.dev.get(&pitot.dev)) {
-            pitot.lastSeenHealthyMs = millis();
+        if ( pitot.lastSeenHealthyMs == 0 ) {
+            if (pitot.dev.start(&pitot.dev)) {
+                pitot.lastSeenHealthyMs = millis();
+            }        
         }
 
-        pitot.dev.calculate(&pitot.dev, &pitotPressureTmp, &pitotTemperature);
+        if ( (millis() - pitot.lastSeenHealthyMs) >= US2MS(pitot.dev.delay)) {
+            if (pitot.dev.get(&pitot.dev))          // read current data
+                pitot.lastSeenHealthyMs = millis();
+
+            if (pitot.dev.start(&pitot.dev))        // init for next read
+                pitot.lastSeenHealthyMs = millis();        
+        }
+
+
+        pitot.dev.calculate(&pitot.dev, &pitotPressureTmp, &pitotTemperatureTmp);
 
 #ifdef USE_SIMULATOR
-        if (SIMULATOR_HAS_OPTION(HITL_AIRSPEED)) {
-            pitotPressureTmp = sq(simulatorData.airSpeed) * SSL_AIR_DENSITY / 20000.0f + SSL_AIR_PRESSURE;     
-        }
+    	if (SIMULATOR_HAS_OPTION(HITL_AIRSPEED)) {
+        	pitotPressureTmp = sq(simulatorData.airSpeed) * SSL_AIR_DENSITY / 20000.0f + SSL_AIR_PRESSURE;
+    	}
 #endif
 #if defined(USE_PITOT_FAKE)
         if (pitotmeterConfig()->pitot_hardware == PITOT_FAKE) { 
@@ -242,14 +249,9 @@ STATIC_PROTOTHREAD(pitotThread)
 #endif
         ptYield();
 
-        // Filter pressure
-        currentTimeUs = micros();
-        pitot.pressure = pt1FilterApply3(&pitot.lpfState, pitotPressureTmp, US2S(currentTimeUs - pitot.lastMeasurementUs));
-        pitot.lastMeasurementUs = currentTimeUs;
-//        ptDelayUs(pitot.dev.delay);
-
         // Calculate IAS
         if (pitotIsCalibrationComplete()) {
+            // NOTE ::
             // https://en.wikipedia.org/wiki/Indicated_airspeed
             // Indicated airspeed (IAS) is the airspeed read directly from the airspeed indicator on an aircraft, driven by the pitot-static system.
             // The IAS is an important value for the pilot because it is the indicated speeds which are specified in the aircraft flight manual for
@@ -259,33 +261,29 @@ STATIC_PROTOTHREAD(pitotThread)
             // Therefore we shouldn't care about CAS/TAS and only calculate IAS since it's more indicative to the pilot and more useful in calculations
             // It also allows us to use pitot_scale to calibrate the dynamic pressure sensor scale
 
-            // // no calibibration 
-            // pitot.airSpeed = pitotmeterConfig()->pitot_scale * fast_fsqrtf( 2.0f * fabsf(pitot.pressure) / SSL_AIR_DENSITY) * 100;
-            
-            // with calibration
+            // NOTE ::filter pressure - apply filter when NOT calibrating for zero !!!
+            currentTimeUs = micros();
+            pitot.pressure = pt1FilterApply3(&pitot.lpfState, pitotPressureTmp, US2S(currentTimeUs - pitot.lastMeasurementUs));
+            pitot.lastMeasurementUs = currentTimeUs;
+
             pitot.airSpeed = pitotmeterConfig()->pitot_scale * fast_fsqrtf(2.0f * fabsf(pitot.pressure - pitot.pressureZero) / SSL_AIR_DENSITY) * 100;  // cm/s
-
-            pitot.temperature = pitotTemperature;   // Kelvin
-
-            debug[0] = pitot.pressure * 1000;
-            debug[1] = pitot.pressureZero * 1000;
-            debug[2] = (pitot.pressure - pitot.pressureZero) * 1000;
-            debug[3] = pitot.dev.delay;
+            pitot.temperature = pitotTemperatureTmp;   // Kelvin
 
         } else {
+            pitot.pressure = pitotPressureTmp;
             performPitotCalibrationCycle();
             pitot.airSpeed = 0.0f;
         }
 
 #ifdef USE_SIMULATOR
-        if (SIMULATOR_HAS_OPTION(HITL_AIRSPEED)) {
+    	if (SIMULATOR_HAS_OPTION(HITL_AIRSPEED)) {
             pitot.airSpeed = simulatorData.airSpeed;
-        }
+    	}
 #endif
 #if defined(USE_PITOT_FAKE)
         if (pitotmeterConfig()->pitot_hardware == PITOT_FAKE) { 
             pitot.airSpeed = fakePitotGetAirspeed();
-        }
+    }
 #endif
     }
 
