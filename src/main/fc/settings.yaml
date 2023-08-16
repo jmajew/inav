@@ -18,9 +18,14 @@ tables:
   - name: baro_hardware
     values: ["NONE", "AUTO", "BMP085", "MS5611", "BMP280", "MS5607", "LPS25H", "SPL06", "BMP388", "DPS310", "B2SMPB", "MSP", "FAKE"]
     enum: baroSensor_e
+
   - name: pitot_hardware
     values: ["NONE", "AUTO", "MS4525", "ADC", "VIRTUAL", "FAKE", "MSP", "DLVR-L10D"]
     enum: pitotSensor_e
+  - name: pitot_aspeed
+    values: ["NONE", "IAS", "TAS"]
+    enum: pitotASpeed_e
+
   - name: receiver_type
     values: ["NONE", "SERIAL", "MSP", "SIM (SITL)"]
     enum: rxReceiverType_e
@@ -592,6 +597,10 @@ groups:
         description: "Selection of pitot hardware."
         default_value: "NONE"
         table: pitot_hardware
+      - name: pitot_aspeed
+        description: "Selection of airspeed shown"
+        default_value: "IAS"
+        table: pitot_aspeed
       - name: pitot_lpf_milli_hz
         min: 0
         max: 10000
@@ -600,6 +609,7 @@ groups:
         min: 0
         max: 100
         default_value: 1.0
+
 
   - name: PG_RX_CONFIG
     type: rxConfig_t
