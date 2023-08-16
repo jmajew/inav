@@ -278,8 +278,11 @@ STATIC_PROTOTHREAD(pitotThread)
 
             if ( pitotmeterConfig()->pitot_aspeed == PITOT_ASPEED_IAS )
                 pitot.airSpeed = ias;
-            else
+            else if ( pitotmeterConfig()->pitot_aspeed == PITOT_ASPEED_TAS )
                 pitot.airSpeed = tas;
+            else
+                pitot.airSpeed = 0.0f;
+
 
             debug[0] = (int32_t)(pitot.airSpeed * 1000);
             debug[1] = (int32_t)(tas * 1000);
