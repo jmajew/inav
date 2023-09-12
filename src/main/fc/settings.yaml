@@ -21,6 +21,9 @@ tables:
   - name: pitot_hardware
     values: ["NONE", "AUTO", "MS4525", "ADC", "VIRTUAL", "FAKE", "MSP", "DLVR-L10D"]
     enum: pitotSensor_e
+  - name: pitot_airspeed_type
+    values: ["NONE", "IAS", "TAS"]
+    enum: pitotAirSpeedType_e
   - name: receiver_type
     values: ["NONE", "SERIAL", "MSP", "SIM (SITL)"]
     enum: rxReceiverType_e
@@ -581,6 +584,24 @@ groups:
         min: 0
         max: 1000
 
+  # - name: PG_PITOTMETER_CONFIG
+    # type: pitotmeterConfig_t
+    # headers: ["sensors/pitotmeter.h"]
+    # condition: USE_PITOT
+    # members:
+      # - name: pitot_hardware
+        # description: "Selection of pitot hardware."
+        # default_value: "NONE"
+        # table: pitot_hardware
+      # - name: pitot_lpf_milli_hz
+        # min: 0
+        # max: 10000
+        # default_value: 350
+      # - name: pitot_scale
+        # min: 0
+        # max: 100
+        # default_value: 1.0
+
   - name: PG_PITOTMETER_CONFIG
     type: pitotmeterConfig_t
     headers: ["sensors/pitotmeter.h"]
@@ -590,6 +611,10 @@ groups:
         description: "Selection of pitot hardware."
         default_value: "NONE"
         table: pitot_hardware
+      - name: pitot_airspeed_type
+        description: "Selection of airspeed types"
+        default_value: "IAS"
+        table: pitot_airspeed_type
       - name: pitot_lpf_milli_hz
         min: 0
         max: 10000
@@ -598,6 +623,7 @@ groups:
         min: 0
         max: 100
         default_value: 1.0
+
 
   - name: PG_RX_CONFIG
     type: rxConfig_t

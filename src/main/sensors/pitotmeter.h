@@ -34,11 +34,18 @@ typedef enum {
     PITOT_DLVR = 7,
 } pitotSensor_e;
 
+typedef enum {
+    PITOT_AIRSPEED_NONE = 0,
+    PITOT_AIRSPEED_IAS = 1,
+    PITOT_AIRSPEED_TAS = 2,
+} pitotAirSpeedType_e;
+
 #define PITOT_MAX  PITOT_FAKE
 #define PITOT_SAMPLE_COUNT_MAX   48
 
 typedef struct pitotmeterConfig_s {
     uint8_t pitot_hardware;                 // Pitotmeter hardware to use
+    uint8_t pitot_airspeed_type;            // TAS or IAS
     uint16_t pitot_lpf_milli_hz;            // additional LPF to reduce pitot noise in [0.001Hz]
     float pitot_scale;                      // scale value
 } pitotmeterConfig_t;

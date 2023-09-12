@@ -70,6 +70,7 @@ PG_REGISTER_WITH_RESET_TEMPLATE(pitotmeterConfig_t, pitotmeterConfig, PG_PITOTME
 
 PG_RESET_TEMPLATE(pitotmeterConfig_t, pitotmeterConfig,
     .pitot_hardware = SETTING_PITOT_HARDWARE_DEFAULT,
+    .pitot_airspeed_type = SETTING_PITOT_AIRSPEED_TYPE_DEFAULT,
     .pitot_lpf_milli_hz = SETTING_PITOT_LPF_MILLI_HZ_DEFAULT,
     .pitot_scale = SETTING_PITOT_SCALE_DEFAULT
 );
@@ -266,8 +267,30 @@ STATIC_PROTOTHREAD(pitotThread)
             pitot.pressure = pt1FilterApply3(&pitot.lpfState, pitotPressureTmp, US2S(currentTimeUs - pitot.lastMeasurementUs));
             pitot.lastMeasurementUs = currentTimeUs;
 
-            pitot.airSpeed = pitotmeterConfig()->pitot_scale * fast_fsqrtf(2.0f * fabsf(pitot.pressure - pitot.pressureZero) / SSL_AIR_DENSITY) * 100;  // cm/s
+//           pitot.airSpeed = pitotmeterConfig()->pitot_scale * fast_fsqrtf(2.0f * fabsf(pitot.pressure - pitot.pressureZero) / SSL_AIR_DENSITY) * 100;  // cm/s
             pitot.temperature = pitotTemperatureTmp;   // Kelvin
+
+            // // Gas Constant is from Aerodynamics for Engineering Students, Third Edition, E.L.Houghton and N.B.Carruthers
+            // #define ISA_GAS_CONSTANT 287.26f
+
+            float rho = baro.baroPressure / ( /*ISA_GAS_CONSTANT*/287.26f * pitot.temperature);
+            float ias = pitotmeterConfig()->pitot_scale * fast_fsqrtf(2.0f * fabsf(pitot.pressure - pitot.pressureZero) / SSL_AIR_DENSITY) * 100;  // cm/s
+            float tas = pitotmeterConfig()->pitot_scale * fast_fsqrtf(2.0f * fabsf(pitot.pressure - pitot.pressureZero) / rho) * 100;  // cm/s
+
+            if ( pitotmeterConfig()->pitot_airspeed_type == PITOT_AIRSPEED_IAS )
+                pitot.airSpeed = ias;
+            else if ( pitotmeterConfig()->pitot_airspeed_type == PITOT_AIRSPEED_TAS )
+                pitot.airSpeed = tas;
+            else
+                pitot.airSpeed = 0.0f;
+
+
+            // debug[0] = (int32_t)(pitot.airSpeed * 1000);
+            // debug[1] = (int32_t)(tas * 1000);
+            // debug[2] = (int32_t)((pitot.pressure - pitot.pressureZero) * 1000);
+            // debug[3] = (int32_t)(pitot.temperature *1000);
+            // debug[4] = (int32_t)(baro.baroPressure *10);
+            // debug[5] = (int32_t)(rho *1000);
 
         } else {
             pitot.pressure = pitotPressureTmp;
